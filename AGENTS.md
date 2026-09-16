@@ -169,3 +169,12 @@ Note: code comments and some docs (e.g. `config/config.yaml`) are written in Rus
 - `docs/FILTER_RULES.md`
 - `docs/BADWORDS.md`
 - `docs/FORMAT_PARAMETER.md`
+
+
+## Technical debt
+
+- Treat technical debt as an explicit engineering risk, but do not confuse it with cosmetics, personal style preferences, or merely "ugly" working code.
+- For each debt item, provide evidence first and classify its impact: **High** (breakage/security/data-loss risk or blocks operation), **Medium** (impedes development, duplicates/diverges logic, or materially increases maintenance cost), **Low** (local complexity with little current risk).
+- Do not refactor for cleanliness alone. Pay down debt when the benefit and risk reduction justify the change; do not rewrite stable, verified code without a concrete reason.
+- Debt fixes must keep minimal scope, preserve existing safety boundaries, and pass the project's normal regression/safety checks. If the fix creates greater risk or new debt, stop and propose a safer alternative.
+- If debt is discovered outside the current task, do not silently expand scope: record the finding and recommendation, and implement it only when it is in scope or explicitly approved by the operator.
