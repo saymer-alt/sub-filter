@@ -23,6 +23,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Agent instructions scope check
+        run: python3 tests/check-agent-context.py
+
       - name: Run tests
         run: go test ./...
 

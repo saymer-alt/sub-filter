@@ -1,188 +1,31 @@
-> **Обязательный контракт для всех агентов и авторов ТЗ (30.10.2026):** [подробная постановка задач без «эффекта обезьяньей лапки»](https://github.com/saymer-alt/saymer-alt/blob/main/AGENT-TASK-CONTRACT.md). Перед работой проверить исходные refs/SHA, готовые результаты, точную цель, scope/non-goals, сохранность данных и сервисов, зависимости, границы разрешений/owner GO, негативную приёмку и доказательства. Не сокращать существенные требования ради токенов. Буквальное выполнение в ущерб цели считается **FAIL**. Местные правила безопасности и архитектуры обязательны.
+# AGENTS.md — sub-filter fork: small agent startup rules
 
-> **Владелец, 26.10.2026 — общее правило для всех проектов:** перед внедрением новой функции / серьёзной переделки требуется короткая «защита идеи» — доказать проблему, сравнить альтернативы (включая ничего не менять / штатную ОС / ждать upstream), оценить пользу, **ТЭО**, стоимость сопровождения, риски, измеримый тест и критерии STOP. Нет доказательства пользы — DEFER/SKIP. Мелкие исправления не требуют отдельной бюрократии. **Источник:** [Proof Before Build](https://github.com/saymer-alt/saymer-alt/blob/main/PROOF-BEFORE-BUILD.md) ([центральный PR #9](https://github.com/saymer-alt/saymer-alt/pull/9)). Существующие safety/CI/permissions сохраняются.
+**Read this, not every reference file.** This is `saymer-alt/sub-filter`, a fork of `Viktor45/sub-filter`. The original project is upstream and is **not in scope** for this task. Use a task branch and Draft PR targeting the fork's `main`; never change upstream, merge into `main`, sync upstream, publish GHCR images, release, or deploy without specific **owner GO**.
 
-# AGENTS.md
+## What matters
 
-## Owner-wide design gate — SIMPLICITY-FIRST (2026-10-24)
+`sub-filter` is a Go 1.26+ HTTP/CLI subscription filtering tool. `main.go` selects mode; `pkg/config` parses nested and legacy config; `pkg/service` handles HTTP/CLI, filtering, YAML formatting and merging; `internal/validator`, `internal/utils`, and protocol packages handle validation, URL normalization and dedupe. Protocols include VLESS, VMess, Trojan, SS and Hysteria2/Hy2.
 
-Before a new service, subsystem, manager, web panel, installer/uninstaller, or heavy CI path, apply the [common engineering contract](https://github.com/saymer-alt/saymer-alt/pull/7). First compare: (A) existing/manual route, (B) smallest safe change, (C) ambitious design. Choose A/B unless C has evidence, cost/complexity budget, and explicit owner approval. If a helper grows into another platform or expensive E2E cycles repeat without new evidence, STOP adding layers and seek an architectural decision. Preserve all verified safety boundaries and working user behavior. [KAS uninstall retrospective #225](https://github.com/saymer-alt/keenetic-auto-setup/issues/225) is an **anti-pattern**, not a best-practice pattern. This documentation change does not authorize production or release modifications.
+Before modifying anything, check branch/HEAD SHA, existing code/tests and requested scope. Favor minimal reversible changes and actual user outcomes, not wholesale refactors. For complex work consult the [common task contract](https://github.com/saymer-alt/saymer-alt/blob/main/AGENT-TASK-CONTRACT.md); for major systems compare the existing/manual path, smallest safe change, and a justified architecture using [Proof Before Build](https://github.com/saymer-alt/saymer-alt/blob/main/PROOF-BEFORE-BUILD.md). Do not turn a small fix into a new platform.
 
-Repository guidance for coding agents working in `sub-filter`.
+## Non-negotiable correctness and security
 
-**Required:** Go 1.26.0 or higher
-**Test Command:** `go test ./...`
-**Build:** `go build -o sub-filter .`
-**Run:** `./sub-filter` or with `--cli` flag for CLI mode
+- **SSRF protection:** preserve `config.IsIPAllowed`, URL/source validation, DNS re-resolution/pinned-IP rules, redirect/IP-family restrictions and private/forbidden destination blocking. `ip=4|6` must not weaken these guards.
+- **HTTP abuse and input protections:** preserve User-Agent allowlist, per-IP rate limiting, source ID validation and bounded processing. Never log or commit subscription credentials, tokens, private URLs, customer data or untracked `tmp/` samples.
+- **Output fidelity:** keep normalized proxy URI semantics, REALITY and transport parameters, Hysteria2 password interpretation, YAML quoting (`yamlQuote`), `format=` plain/YAML/base64 combinations and safe response headers. Unknown schemes must be skipped instead of invented as other proxy types.
+- **Compatibility:** preserve nested and legacy flat YAML configuration, country filters, source ID aliases, dedupe via `NormalizeLinkKey`, merge winner selection and caching/singleflight segregation across `ip=4|6`. Changes require negative and positive regressions.
+- Do not widen GitHub Actions permissions, alter external image/release destinations, Docker networking/volumes or CI security on a docs-only task. Never treat Go unit tests as production verification.
 
-## Purpose
+## Efficient execution
 
-`sub-filter` is a Go CLI/service application that fetches proxy subscription sources, validates and normalizes proxy links, filters bad words, applies optional country filtering, deduplicates and merges subscriptions, and exposes results via HTTP endpoints or CLI output.
+1. Read only relevant source and a **task-matched guide** below. For Go-only edits, the concise [Go instructions](.github/instructions/go.instructions.md) apply; Docker, Actions and Markdown instructions are scoped by `applyTo`. Generic reference archives are **not required reading**.
+2. Preserve the smallest working change; document new observable behavior. Update relevant English `docs/`, Russian `docs/ru/` and Chinese `docs/zh/` material when user-facing docs change, not on unrelated tasks.
+3. For code changes run `go test ./...`, `go vet ./...`, `go build .`; for concurrent code consider `go test -race ./...`. Require exact-head CI and targeted security regression evidence.
+4. Check diff/commit SHA and report PASS / FAIL / BLOCKED / NOT TESTED. Propose Draft PR; never merge, publish or deploy automatically. Separate discovery of technical debt from authorization to fix it.
 
-Supported protocols:
+## Read only when needed
 
-- `vless://`
-- `vmess://`
-- `trojan://`
-- `ss://`
-- `hysteria2://`
-- `hy2://`
-
-Primary behaviors:
-
-- fetch remote or local subscription sources
-- validate proxy links per protocol and policy rules
-- strip/replace/delete bad-word matches
-- filter entries by country markers in URL fragments
-- merge multiple source IDs with deduplication
-- support HTTP endpoints and CLI mode
-
-## Entry Points
-
-- `main.go`: parses flags, loads config, creates `service.Service`, starts HTTP server or processes CLI.
-- `pkg/service/service.go`: main app logic, HTTP handlers, request protections, filtering, merge, caching, and country parsing.
-- `pkg/config/config.go`: config schema, nested YAML plus legacy flat key support, runtime loading of sources/rules/bad words/countries/UA allowlist.
-
-## Important Packages
-
-- `pkg/service`: HTTP handlers, request validation, filtering, merge, CLI processing.
-- `pkg/config`: config loading, validation, file path resolution.
-- `pkg/cache`: compiled-regex cache (`RegexCache`) with hit/miss stats; used by bad-word filtering.
-- `internal/validator`: generic rule engine and validation policies.
-- `internal/utils`: URL normalization, host/port validation, country lookup, dedupe helpers.
-- `vless`, `vmess`, `trojan`, `ss`, `hysteria2`: protocol-specific parsing/normalization.
-- `pkg/errors`: typed application errors.
-- `pkg/logger`: structured logging wrapper.
-
-## Runtime Flow
-
-1. `main.go` loads config via `config.Load` and creates `Service`.
-2. `pkg/config` loads configured source map, rules, bad-word rules, countries, and optionally allowed user agents.
-3. `Service` builds protocol processors and registers HTTP handlers.
-4. `/filter` and `/merge` validate requests, rate-limit by IP, check User-Agent, parse country codes, and process sources.
-5. Protocol packages match and normalize proxy lines, then service filters and deduplicates the output.
-6. Response content is served with safe headers and optional line limiting.
-
-## HTTP Surface
-
-- `/filter`
-- `/merge`
-- `/health`
-
-Both `/filter` and `/merge` accept a `format=` query parameter (see `docs/FORMAT_PARAMETER.md`): plain text (default), `yaml` (Clash/Mihomo proxy list), `base64`, or combinations (e.g. `yaml+base64`; note `+` decodes to a space, and `formatContent` accepts both). Invalid values return `400 Bad Request`. Formatting happens in `formatContent`/`contentToYAML` in `pkg/service/service.go` after filtering/merge; `serveFile` adjusts filename extension and Content-Type accordingly.
-
-`ip=4|6` forces outbound source fetches onto one stack: `fetchSourceContent` re-resolves the host and dials the first address of that family that passes `config.IsIPAllowed` (SSRF check must stay — it guards against DNS rebinding). Omitted → the IP pinned at source-load time is used, behavior unchanged. Stack-specific results get separate cache files (`_ip4`/`_ip6` suffix) and singleflight keys.
-
-YAML conversion gotchas (⚠️ easy to break):
-
-- Builders (`buildSSYAML`, `buildVLESSYAML`, `buildVMESSYAML`, `buildTrojanYAML`, `buildHysteria2YAML`) must parse the **normalized** link forms the protocol packages emit: SS userinfo is base64 (`utils.DecodeUserInfo`), VMess is `vmess://BASE64(JSON)` with the `#fragment` stripped via `vmessPayload()`.
-- Canonical Xray transport param is `type` (`network` is a fallback); REALITY fields are `pbk`/`sid`/`fp`; hy2 password comes from userinfo or `obfs-password` (never from `obfs`); legacy `allowInsecure` maps to `skip-cert-verify`; speed limits are `upmbps`/`downmbps`.
-- Unknown schemes are skipped, never converted to fake `http` proxies. All string values go through `yamlQuote` (escaping).
-- `TestFormatYAML_RealFile_NoLostParams` in `pkg/service/format_yaml_file_test.go` guards against parameter loss using the real subscription sample `tmp/test.txt` (test skips if the file is absent).
-
-Request protections (⚠️ **Security-Critical**):
-
-- **User-Agent allowlist** — validates requests against built-in prefixes and optional file; do not weaken without security review
-- **per-IP rate limiting** — prevents abuse; configurable but defaults are intentional
-- **strict source ID validation** — enforces `^[a-zA-Z0-9_]+$`, max length 64
-
-## CLI Surface
-
-Flags live in `main.go`.
-
-- `--cli`
-- `--stdout`
-- `--config`
-- `--country`
-- `--debug`
-
-CLI accepts source IDs as positional args or processes all configured sources if none are passed. In server mode, a single positional arg is treated as the port.
-
-## Config Reality
-
-The code prefers nested YAML sections `server`, `cache`, `sources`, `validation`, `logging`, but also accepts legacy flat keys for compatibility.
-
-Important nested fields:
-
-- `sources.file`
-- `cache.directory`
-- `cache.ttl`
-- `cache.merge_buckets` (shard count for disk-based streaming merge; more shards = lower peak memory, more temp files)
-- `validation.rules_file`
-- `validation.bad_words_file`
-- `validation.countries_file`
-- `validation.ua_file`
-- `validation.max_countries`
-- `validation.max_merge_ids`
-
-`config.Load` also honors `SUBFILTER_CONFIG`, `SUBFILTER_PORT`, and `LOG_LEVEL`.
-
-Runtime artifacts, not source (do not commit changes from them):
-
-- `cache/` — disk cache directory created/populated at runtime.
-- `tmp/` — untracked local samples; `tmp/test.txt` feeds `TestFormatYAML_RealFile_NoLostParams` when present.
-
-## Deployment
-
-- `Dockerfile`: multi-stage build to a `scratch` image, binary at `/app/filter`, defaults `SUBFILTER_CONFIG=/config/config.yaml`. `docker-compose.yml` wraps it.
-- `subfilter.container` is a Podman quadlet example for rootless systemd deployment; published image is `ghcr.io/viktor45/sub-filter`.
-- CI lives in `.github/workflows/`: `test.yaml` (tests + vet + build on push/PR), `container.yaml` (image build/push), `release.yaml`, `ghcr-cleaner.yaml`.
-
-## Country Filtering
-
-- `/filter` and `/merge` use `c=` and `parseCountryCodes`.
-- Only two-letter uppercase codes are accepted and validated against loaded countries.
-- CLI `--country` also applies country filtering.
-
-## Dedupe and Merge
-
-- dedupe key from `internal/utils.NormalizeLinkKey`
-- winner selection via `CompareAndSelectBetter`
-- `/merge` accepts repeated `ids`, comma-separated `ids`, and legacy `id`
-
-## Change guidance
-
-- New protocol: implement `ProxyLink`, add tests, register in `createProxyProcessors()`, and add a YAML builder in `parseProxyToYAML` plus a case in `format_yaml_file_test.go`.
-- Validation behavior: update `config/rules.yaml`, protocol tests, and relevant docs.
-- Config schema changes: update `pkg/config/config.go`, docs, and examples together.
-- Docs live in three languages: English (primary) in `docs/`, Russian in `docs/ru/`, Chinese in `docs/zh/`. Keep all three in sync when changing documented behavior; each file has a language switcher line at the top. `docs/DEVELOPMENT.md` (and its translations) covers typed errors and adding new protocols.
-- Preserve rate limiter and User-Agent protections unless there is a security justification.
-
-## Tests
-
-- `go test ./...` — run all tests
-- `go vet ./...` — CI runs vet plus `go build .` alongside tests; run both before committing
-- `go test ./pkg/service ./pkg/config ./internal/validator` — test core packages
-- `go test ./ss ./vless ./vmess ./trojan ./hysteria2` — test protocol implementations
-- `go test -race ./...` — test for race conditions
-- `go test ./pkg/service/ -bench=. -benchmem -run='^$'` — benchmarks for parsing, YAML conversion, base64, bad-word filtering (`bench_format_test.go`)
-- `security_test.go` (repo root) — security-focused tests: header injection, SSRF source-URL/IP validation, regex pattern limits, rate-limiter concurrency, file permissions. Changes to request protections must keep these passing.
-
-## Go Development Standards
-
-Refer to [.github/instructions/go.instructions.md](.github/instructions/go.instructions.md) for idiomatic Go practices, naming conventions, and code review standards used in this project. Sibling files `docker.instructions.md`, `md.instructions.md`, and `actions.instructions.md` cover Dockerfiles, documentation, and GitHub Actions changes respectively.
-
-Note: code comments and some docs (e.g. `config/config.yaml`) are written in Russian; keep that convention when editing those files.
-
-## Files worth reading first
-
-- `main.go`
-- `pkg/service/service.go`
-- `pkg/config/config.go`
-- `internal/validator/generic.go`
-- `internal/utils/utils.go`
-- `config/rules.yaml`
-- `config/badwords.yaml`
-- `docs/README.md`
-- `docs/FILTER_RULES.md`
-- `docs/BADWORDS.md`
-- `docs/FORMAT_PARAMETER.md`
-
-
-## Technical debt
-
-- Treat technical debt as an explicit engineering risk, but do not confuse it with cosmetics, personal style preferences, or merely "ugly" working code.
-- For each debt item, provide evidence first and classify its impact: **High** (breakage/security/data-loss risk or blocks operation), **Medium** (impedes development, duplicates/diverges logic, or materially increases maintenance cost), **Low** (local complexity with little current risk).
-- Do not refactor for cleanliness alone. Pay down debt when the benefit and risk reduction justify the change; do not rewrite stable, verified code without a concrete reason.
-- Debt fixes must keep minimal scope, preserve existing safety boundaries, and pass the project's normal regression/safety checks. If the fix creates greater risk or new debt, stop and propose a safer alternative.
-- If debt is discovered outside the current task, do not silently expand scope: record the finding and recommendation, and implement it only when it is in scope or explicitly approved by the operator.
+- [01 — owner policy, workflow and tests](docs/agent-guidance/01-project-policy-and-development.md) — task planning or process work.
+- [02 — architecture, packages and deployment](docs/agent-guidance/02-architecture-and-entrypoints.md) — entry points, CLI, Docker or structural changes.
+- [03 — HTTP/SSRF, filtering, YAML, caching and dedupe](docs/agent-guidance/03-http-validation-and-data-contracts.md) — remote sources, request handling or output generation.
+- Archived generic examples: [Go](docs/agent-guidance/reference/go-original.md), [Docker](docs/agent-guidance/reference/docker-original.md), [Actions](docs/agent-guidance/reference/actions-original.md), [Markdown](docs/agent-guidance/reference/markdown-original.md). **Manual reference only**, never preload all.
